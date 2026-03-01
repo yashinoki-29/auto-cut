@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AutoCut — FFmpeg Edition</title>
+<!-- v0.11 UMD: window.FFmpeg = { createFFmpeg, fetchFile } -->
+<script src="/ffmpeg/ffmpeg.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@300;400;500&display=swap');
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #07070a; --bg2: #0f0f14; --bg3: #161620;
+    --border: #1f1f2e; --gold: #d4a843; --gold2: #e8c878;
+    --text: #d8d4e8; --muted: #5a5870;
+  }
+  body {
+    background: var(--bg); color: var(--text); font-family: 'DM Mono', monospace;
+    min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+    padding: 48px 20px 80px;
+  }
+  .header { text-align: center; margin-bottom: 56px; }
+  .header-eyebrow { font-size: 10px; letter-spacing: 6px; color: var(--muted); text-transform: uppercase; margin-bottom: 14px; }
+  .header h1 {
+    font-family: 'DM Serif Display', serif; font-size: 56px; font-weight: 400; letter-spacing: -1.5px;
+    background: linear-gradient(135deg, var(--text) 0%, var(--gold) 60%, var(--gold2) 100%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    line-height: 1; margin-bottom: 10px;
+  }
+  .header-sub { font-size: 11px; color: var(--muted); letter-spacing: 2px; }
+  .wrap { width: 100%; max-width: 900px; }
+
+  #ffmpeg-status {
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 4px;
+    padding: 40px; text-align: center;
+  }
+  .status-title { font-family: 'DM Serif Display', serif; font-size: 20px; margin-bottom: 12px; }
+  .status-sub { font-size: 11px; color: var(--muted); letter-spacing: 1px; margin-bottom: 20px; }
+  .bar-bg { background: var(--bg3); height: 3px; border-radius: 2px; overflow: hidden; max-width: 300px; margin: 0 auto; }
+  .bar-fill { height: 100%; background: linear-gradient(90deg, var(--gold), var(--gold2)); border-radius: 2px; transition: width 0.4s; }
+
+  #upload-zone {
+    display: none; border: 1px dashed var(--border); border-radius: 4px; padding: 100px 40px;
+    text-align: center; cursor: pointer; transition: all 0.25s; background: var(--bg2); position: relative; overflow: hidden;
+  }
+  #upload-zone::before {
+    content: ''; position: absolute; inset: 0;
+    background: radial-gradient(ellipse at 50% 0%, rgba(212,168,67,0.06) 0%, transparent 70%); pointer-events: none;
+  }
+  #upload-zone:hover, #upload-zone.drag { border-color: var(--gold); background: rgba(212,168,67,0.04); }
+  .upload-icon { font-size: 44px; margin-bottom: 20px; opacity: 0.35; }
+  .upload-title { font-family: 'DM Serif Display', serif; font-size: 22px; margin-bottom: 8px; }
+  .upload-hint { font-size: 11px; color: var(--muted); letter-spacing: 1px; }
+
+  #editor { display: none; }
+  .panel { background: var(--bg2); border: 1px solid var(--border); border-radius: 4px; padding: 24px; margin-bottom: 16px; }
+  .panel-label { font-size: 9px; letter-spacing: 4px; color: var(--muted); text-transform: uppercase; margin-bottom: 16px; }
+
+  #preview-wrap {
+    position: relative; background: #000; border-radius: 4px; overflow: hidden;
+    margin-bottom: 16px; aspect-ratio: 16/9; display: flex; align-items: center; justify-content: center;
+  }
+  #preview { width: 100%; height: 100%; object-fit: contain; display: block; }
+
+  .timeline-wrap {
+    position: relative; height: 48px; background: var(--bg3); border-radius: 3px;
+    overflow: hidden; border: 1px solid var(--border); margin-bottom: 8px;
+  }
+  .tl-seg {
+    position: absolute; height: 100%;
+    background: rgba(212,168,67,0.3); border-left: 1px solid var(--gold); border-right: 1px solid var(--gold);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 9px; color: var(--gold); transition: background 0.2s;
+  }
+  .tl-seg.active { background: rgba(212,168,67,0.6); }
+  .tl-ph { position: absolute; width: 1px; height: 100%; background: #fff; opacity: 0.7; pointer-events: none; }
+  .tl-labels { display: flex; justify-content: space-between; font-size: 9px; color: var(--muted); letter-spacing: 1px; }
+
+  .cg { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+  @media(max-width:600px){ .cg{ grid-template-columns:1fr; } }
+  .stat-label { font-size: 9px; color: var(--muted); letter-spacing: 3px; text-transform: uppercase; margin-bottom: 8px; }
+  .stat-val { font-family: 'DM Serif Display', serif; font-size: 40px; color: var(--gold); line-height: 1; }
+  .stat-unit { font-size: 14px; color: var(--muted); }
+  .stat-sub { font-size: 10px; color: var(--muted); margin-top: 4px; letter-spacing: 1px; }
+  .slider-row { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
+  input[type=range] { flex: 1; -webkit-appearance: none; height: 2px; background: var(--border); outline: none; border-radius: 1px; }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%;
+    background: var(--gold); cursor: pointer; box-shadow: 0 0 8px rgba(212,168,67,0.4);
+  }
+  .btn { padding: 14px 24px; border-radius: 2px; font-family: 'DM Mono', monospace; font-size: 11px; letter-spacing: 3px; text-transform: uppercase; cursor: pointer; border: none; transition: all 0.2s; }
+  .btn-p { background: var(--gold); color: #000; font-weight: 500; flex: 1; }
+  .btn-p:hover { background: var(--gold2); }
+  .btn-p:disabled { background: #333; color: #666; cursor: not-allowed; }
+  .btn-g { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+  .btn-g:hover { border-color: var(--muted); color: var(--text); }
+  .btn-row { display: flex; gap: 12px; }
+
+  #prog-panel { display: none; }
+  .xlog { font-size: 10px; color: var(--muted); line-height: 1.7; max-height: 60px; overflow: hidden; margin-bottom: 10px; }
+  .xpct { font-size: 10px; color: var(--muted); letter-spacing: 2px; margin-top: 6px; }
+
+  #dl-wrap { display: none; text-align: center; padding: 32px; }
+  .badge { display: inline-block; background: rgba(100,200,100,0.1); border: 1px solid rgba(100,200,100,0.3); color: #6ec87a; font-size: 9px; letter-spacing: 2px; padding: 3px 8px; border-radius: 1px; margin-bottom: 12px; }
+  #dl-link {
+    display: inline-block; background: var(--gold); color: #000; padding: 16px 40px; border-radius: 2px;
+    font-family: 'DM Mono', monospace; font-size: 12px; letter-spacing: 4px; text-decoration: none;
+    font-weight: 500; text-transform: uppercase; transition: background 0.2s;
+  }
+  #dl-link:hover { background: var(--gold2); }
+  #dl-note { font-size: 10px; color: var(--muted); margin-top: 12px; letter-spacing: 1px; }
+  .footer { margin-top: 48px; font-size: 10px; color: #2a2a3a; text-align: center; letter-spacing: 1px; line-height: 2; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-eyebrow">powered by ffmpeg.wasm v0.11</div>
+  <h1>AutoCut</h1>
+  <div class="header-sub">長時間動画の自動カットエディター</div>
+</div>
+
+<div class="wrap">
+  <div id="ffmpeg-status">
+    <div class="status-title">FFmpeg を初期化中...</div>
+    <div class="status-sub" id="load-sub">少々お待ちください</div>
+    <div class="bar-bg"><div class="bar-fill" id="load-bar" style="width:10%"></div></div>
+  </div>
+
+  <div id="upload-zone">
+    <div class="upload-icon">▶</div>
+    <div class="upload-title">動画をドロップ</div>
+    <div class="upload-hint">またはクリックして選択 — MP4, MOV, MKV, WebM など</div>
+    <input type="file" id="file-input" accept="video/*" style="display:none">
+  </div>
+
+  <div id="editor">
+    <div class="panel" style="padding:0;overflow:hidden">
+      <div id="preview-wrap">
+        <video id="preview" playsinline></video>
+        <button id="remove-btn" title="動画を削除" style="position:absolute;top:10px;right:10px;width:32px;height:32px;border-radius:50%;background:rgba(0,0,0,0.6);border:1px solid rgba(255,255,255,0.3);color:#fff;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;z-index:10;">✕</button>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-label">タイムライン</div>
+      <div class="timeline-wrap" id="timeline"><div class="tl-ph" id="playhead"></div></div>
+      <div class="tl-labels"><span>0:00</span><span id="tl-mid"></span><span id="tl-end"></span></div>
+    </div>
+    <div class="panel">
+      <div class="cg">
+        <div>
+          <div class="stat-label">目標の長さ（分）</div>
+          <div class="slider-row">
+            <input type="range" id="target-slider" min="0.5" step="0.5" value="1">
+            <div class="stat-val" id="target-display" style="font-size:32px">1.0</div>
+          </div>
+          <div class="stat-sub" id="seg-info">計算中...</div>
+        </div>
+        <div>
+          <div class="stat-label">削減率</div>
+          <div class="stat-val" id="red-pct">—</div>
+          <div class="stat-sub" id="red-info">—</div>
+        </div>
+      </div>
+    </div>
+    <div class="panel" id="prog-panel">
+      <div class="panel-label">エクスポート中</div>
+      <div class="xlog" id="xlog">処理中...</div>
+      <div class="bar-bg"><div class="bar-fill" id="xbar" style="width:0%"></div></div>
+      <div class="xpct" id="xpct">0%</div>
+    </div>
+    <div id="dl-wrap">
+      <div class="badge">✓ エクスポート完了</div><br>
+      <a id="dl-link" href="#">↓ 動画をダウンロード</a>
+      <div id="dl-note"></div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-p" id="export-btn">▼ エクスポート開始</button>
+      <button class="btn btn-g" id="cancel-btn" style="display:none">✕ キャンセル</button>
+    </div>
+  </div>
+</div>
+
+<div class="footer">すべての処理はブラウザ内で完結 — 動画はサーバーに送信されません</div>
+
+<script>
+let ff = null, videoDuration = 0, segments = [], targetMin = 1, inputFile = null, raf = null, cancelled = false;
+const $ = id => document.getElementById(id);
+const fmt = s => `${Math.floor(s/60)}:${Math.floor(s%60).toString().padStart(2,'0')}`;
+
+async function reinitFFmpeg() {
+  try {
+    const { createFFmpeg } = window.FFmpeg;
+    ff = createFFmpeg({
+      corePath: window.location.origin + '/ffmpeg/ffmpeg-core.js',
+      log: true,
+      progress: ({ ratio }) => {
+        const p = Math.min(100, Math.round(ratio * 100));
+        $('xbar').style.width = p + '%';
+        $('xpct').textContent = p + '%';
+      }
+    });
+    ff.setLogger(({ message }) => { $('xlog').textContent = message.slice(0, 140); });
+    await ff.load();
+  } catch(e) {
+    console.error('再初期化失敗:', e);
+  }
+}
+
+async function initFFmpeg() {
+  try {
+    if (!window.FFmpeg || !window.FFmpeg.createFFmpeg) {
+      throw new Error('/ffmpeg/ffmpeg.min.js が正しく読み込まれていません');
+    }
+    const { createFFmpeg, fetchFile } = window.FFmpeg;
+    window._ff_fetchFile = fetchFile;
+    ff = createFFmpeg({
+      corePath: window.location.origin + '/ffmpeg/ffmpeg-core.js',
+      log: true,
+      progress: ({ ratio }) => {
+        const p = Math.min(100, Math.round(ratio * 100));
+        $('xbar').style.width = p + '%';
+        $('xpct').textContent = p + '%';
+      }
+    });
+
+    ff.setLogger(({ message }) => {
+      $('xlog').textContent = message.slice(0, 140);
+    });
+
+    $('load-sub').textContent = 'FFmpegコアを読み込み中...';
+    $('load-bar').style.width = '40%';
+
+    await ff.load();
+
+    $('load-bar').style.width = '100%';
+    $('load-sub').textContent = '読み込み完了 ✓';
+    setTimeout(() => {
+      $('ffmpeg-status').style.display = 'none';
+      $('upload-zone').style.display = 'block';
+      setupUpload();
+    }, 300);
+  } catch(e) {
+    $('load-sub').innerHTML = `<span style="color:#e05a5a">エラー: ${e.message}</span>`;
+    console.error(e);
+  }
+}
+
+function setupUpload() {
+  const zone = $('upload-zone'), input = $('file-input');
+  zone.onclick = () => input.click();
+  input.onchange = e => handleFile(e.target.files[0]);
+  zone.ondragover = e => { e.preventDefault(); zone.classList.add('drag'); };
+  zone.ondragleave = () => zone.classList.remove('drag');
+  zone.ondrop = e => { e.preventDefault(); zone.classList.remove('drag'); handleFile(e.dataTransfer.files[0]); };
+}
+
+function handleFile(file) {
+  if (!file?.type.startsWith('video/')) return;
+  inputFile = file;
+  const preview = $('preview');
+  preview.src = URL.createObjectURL(file);
+  preview.onloadedmetadata = () => {
+    videoDuration = preview.duration;
+    $('upload-zone').style.display = 'none';
+    $('editor').style.display = 'block';
+    $('dl-wrap').style.display = 'none';
+    $('prog-panel').style.display = 'none';
+    const slider = $('target-slider');
+    const maxM = Math.max(0.5, parseFloat(((videoDuration / 60) * 0.9).toFixed(1)));
+    slider.max = maxM; slider.value = Math.min(1, maxM);
+    targetMin = parseFloat(slider.value);
+    slider.oninput = () => {
+      targetMin = parseFloat(slider.value);
+      $('target-display').textContent = targetMin.toFixed(1);
+      computeSegments(); renderTimeline();
+    };
+    computeSegments(); renderTimeline(); startPlayhead();
+  };
+}
+
+function computeSegments() {
+  const target = targetMin * 60;
+  if (target >= videoDuration) {
+    segments = [{ start: 0, end: videoDuration }];
+  } else {
+    const n = Math.max(3, Math.ceil(target / 8));
+    const len = target / n, gap = (videoDuration - target) / (n + 1);
+    segments = Array.from({ length: n }, (_, i) => {
+      const s = gap * (i + 1) + len * i;
+      return { start: +s.toFixed(3), end: +(s + len).toFixed(3) };
+    });
+  }
+  const total = segments.reduce((a, s) => a + s.end - s.start, 0);
+  const pct = Math.round((1 - total / videoDuration) * 100);
+  $('target-display').textContent = targetMin.toFixed(1);
+  $('seg-info').textContent = `${fmt(total)} / ${segments.length}セグメント`;
+  $('red-pct').innerHTML = `${pct}<span class="stat-unit">%</span>`;
+  $('red-info').textContent = `${fmt(videoDuration - total)} カット`;
+}
+
+function renderTimeline() {
+  const tl = $('timeline');
+  tl.querySelectorAll('.tl-seg').forEach(e => e.remove());
+  segments.forEach((seg, i) => {
+    const el = document.createElement('div');
+    el.className = 'tl-seg'; el.id = `s${i}`;
+    el.style.left = (seg.start / videoDuration * 100) + '%';
+    el.style.width = ((seg.end - seg.start) / videoDuration * 100) + '%';
+    el.textContent = i + 1;
+    tl.appendChild(el);
+  });
+  $('tl-mid').textContent = fmt(videoDuration / 2);
+  $('tl-end').textContent = fmt(videoDuration);
+}
+
+function startPlayhead() {
+  const preview = $('preview'), ph = $('playhead');
+  const tick = () => {
+    if (videoDuration > 0) {
+      ph.style.left = (preview.currentTime / videoDuration * 100) + '%';
+      segments.forEach((seg, i) => {
+        const el = $(`s${i}`);
+        if (el) el.classList.toggle('active', preview.currentTime >= seg.start && preview.currentTime <= seg.end);
+      });
+    }
+    raf = requestAnimationFrame(tick);
+  };
+  raf = requestAnimationFrame(tick);
+}
+
+async function startExport() {
+  if (!ff || !inputFile || !segments.length) return;
+  cancelled = false;
+  $('export-btn').disabled = true;
+  $('cancel-btn').style.display = 'block';
+  $('prog-panel').style.display = 'block';
+  $('dl-wrap').style.display = 'none';
+  $('xbar').style.width = '0%'; $('xpct').textContent = '0%';
+  $('xlog').textContent = '動画を読み込み中...';
+
+  try {
+    const ext = inputFile.name.split('.').pop() || 'mp4';
+    const inputName = `input.${ext}`;
+    ff.FS('writeFile', inputName, await window._ff_fetchFile(inputFile));
+
+    const n = segments.length;
+    const fv = segments.map((s,i) => `[0:v]trim=start=${s.start}:end=${s.end},setpts=PTS-STARTPTS[v${i}]`).join(';');
+    const cv = segments.map((_,i) => `[v${i}]`).join('');
+
+    const buildArgs = (withAudio) => {
+      if (withAudio) {
+        const fa = segments.map((s,i) => `[0:a]atrim=start=${s.start}:end=${s.end},asetpts=PTS-STARTPTS[a${i}]`).join(';');
+        const ca = segments.map((_,i) => `[a${i}]`).join('');
+        return {
+          filter: `${fv};${fa};${cv}${ca}concat=n=${n}:v=1:a=1[vout][aout]`,
+          mapArgs: ['-map', '[vout]', '-map', '[aout]'],
+          audioArgs: ['-c:a', 'aac', '-b:a', '128k']
+        };
+      } else {
+        return {
+          filter: `${fv};${cv}concat=n=${n}:v=1:a=0[vout]`,
+          mapArgs: ['-map', '[vout]'],
+          audioArgs: ['-an']
+        };
+      }
+    };
+
+    $('xlog').textContent = 'FFmpegでカット処理中...';
+
+    // まず音声ありで試す、失敗したら音声なしで再試行
+    let succeeded = false;
+    for (const withAudio of [true, false]) {
+      try {
+        const { filter, mapArgs, audioArgs } = buildArgs(withAudio);
+        if (!withAudio) $('xlog').textContent = '音声なしで再試行中...';
+        await ff.run(
+          '-i', inputName,
+          '-filter_complex', filter,
+          ...mapArgs,
+          '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '22',
+          ...audioArgs,
+          '-movflags', '+faststart',
+          'output.mp4'
+        );
+        // output.mp4 が生成されたか確認
+        ff.FS('readFile', 'output.mp4');
+        succeeded = true;
+        break;
+      } catch(e) {
+        try { ff.FS('unlink', 'output.mp4'); } catch(_) {}
+        if (!withAudio) throw e;
+      }
+    }
+
+    const data = ff.FS('readFile', 'output.mp4');
+    const blob = new Blob([data.buffer], { type: 'video/mp4' });
+    const url = URL.createObjectURL(blob);
+    const dl = $('dl-link');
+    dl.href = url;
+    dl.download = 'autocut_' + inputFile.name.replace(/\.[^.]+$/, '') + '.mp4';
+    const total = segments.reduce((a, s) => a + s.end - s.start, 0);
+    $('dl-note').textContent = `${fmt(total)} / ${(blob.size/1024/1024).toFixed(1)}MB — MP4 (H.264)`;
+    $('xbar').style.width = '100%'; $('xpct').textContent = '完了 ✓';
+    $('dl-wrap').style.display = 'block';
+    $('cancel-btn').style.display = 'none';
+    $('export-btn').disabled = true;
+
+    try { ff.FS('unlink', inputName); } catch(_) {}
+    try { ff.FS('unlink', 'output.mp4'); } catch(_) {}
+  } catch(e) {
+    if (!cancelled) $('xlog').textContent = 'エラー: ' + e.message;
+    console.error(e);
+  }
+  $('cancel-btn').style.display = 'none';
+  if (!cancelled) $('export-btn').disabled = false;
+}
+
+function resetAll() {
+  cancelAnimationFrame(raf);
+  $('editor').style.display = 'none';
+  $('upload-zone').style.display = 'block';
+  cancelled = true;
+  $('prog-panel').style.display = 'none';
+  $('dl-wrap').style.display = 'none';
+  $('cancel-btn').style.display = 'none';
+  const p = $('preview'); p.pause(); p.src = '';
+  $('file-input').value = '';
+  $('export-btn').disabled = false;
+  inputFile = null; segments = []; videoDuration = 0;
+}
+
+$('export-btn').addEventListener('click', startExport);
+$('cancel-btn').addEventListener('click', async () => {
+  cancelled = true;
+  $('cancel-btn').style.display = 'none';
+  $('xlog').textContent = 'キャンセル中...';
+  $('export-btn').disabled = true;
+  // WorkerをKillして再初期化
+  try { ff.exit(); } catch(e) {}
+  ff = null;
+  $('prog-panel').style.display = 'none';
+  $('export-btn').disabled = false;
+  $('xlog').textContent = '';
+  // FFmpegを再初期化
+  await reinitFFmpeg();
+});
+$('remove-btn').addEventListener('click', resetAll);
+initFFmpeg();
+</script>
+</body>
+</html>
